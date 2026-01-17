@@ -1,3 +1,5 @@
 .env
 __pycache__/
 .venv/
+garmin_stats_history.*
+backup.log
