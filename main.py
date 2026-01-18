@@ -113,18 +113,6 @@ def get_column_averages(rows):
     
     return averages
 
-def get_headers_with_averages(fieldnames, averages):
-    """Crea cabeceras con las medias incluidas."""
-    headers = []
-    for field in fieldnames:
-        if field == 'Fecha':
-            headers.append(field)
-        elif field in averages:
-            headers.append(f"{field} (media: {averages[field]})")
-        else:
-            headers.append(field)
-    return headers
-
 def update_csv_history(new_data):
     """Borra las filas de los días recuperados y reescribe todos los datos nuevos con medias en cabecera."""
     if not new_data:
@@ -134,14 +122,27 @@ def update_csv_history(new_data):
     existing_rows = []
     new_dates = set(row['Fecha'] for row in new_data)
     
-    # 1. Si el archivo existe, leemos las filas que NO están en los nuevos datos
+    # 1. Si el archivo existe, leemos las filas que NO están en los nuevos datos (saltando la fila de medias)
     if file_exists:
         try:
             with open(CSV_FILE_PATH, mode='r', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
+                row_count = 0
                 for row in reader:
-                    if row['Fecha'] not in new_dates:
-                        existing_rows.append(row)
+                    row_count += 1
+                    # Saltar la primera fila de datos (que contiene las medias anteriores)
+                    if row_count == 1:
+                        continue
+                    
+                    # Normalizar claves: eliminar " (media: ...)" si existe
+                    normalized_row = {}
+                    for key, value in row.items():
+                        # Extraer solo el nombre del campo sin la media
+                        clean_key = key.split(' (media:')[0] if key else key
+                        normalized_row[clean_key] = value
+                    
+                    if normalized_row['Fecha'] not in new_dates:
+                        existing_rows.append(normalized_row)
         except Exception as e:
             print(f"⚠️ Error leyendo archivo existente: {e}")
 
@@ -155,17 +156,23 @@ def update_csv_history(new_data):
     # 3. Calculamos las medias de todas las columnas
     averages = get_column_averages(all_rows)
     
-    # 4. Escribimos todos los datos con cabeceras que incluyen las medias
+    # 4. Escribimos todos los datos con cabeceras normales y una fila de medias
     try:
         with open(CSV_FILE_PATH, mode='w', newline='', encoding='utf-8') as f:
             fieldnames = list(new_data[0].keys())
-            headers_with_averages = get_headers_with_averages(fieldnames, averages)
             
-            # Escribimos la cabecera personalizada
-            f.write(','.join(headers_with_averages) + '\n')
+            # Escribimos la cabecera con los nombres originales
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            
+            # Escribimos la fila de medias
+            averages_row = {"Fecha": "MEDIAS"}
+            for field in fieldnames:
+                if field != "Fecha":
+                    averages_row[field] = str(averages.get(field, ""))
+            writer.writerow(averages_row)
             
             # Escribimos las filas de datos
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writerows(all_rows)
             
         print(f"✅ Se han actualizado {len(new_data)} registros en: {CSV_FILE_PATH}")
