@@ -92,8 +92,24 @@ def get_column_averages(rows):
     if not rows:
         return {}
     
+    original_rows = rows
+    original_count = len(original_rows)
+    print(f"🔍 Total filas antes del filtro: {original_count}")
+    
+    # Filtrar filas donde Sueño (h) es 0
+    rows = [row for row in original_rows if float(row.get('Sueño (h)', 0)) != 0]
+    
+    filtered_count = len(rows)
+    excluded_count = original_count - filtered_count
+    print(f"🔍 Filas después del filtro (Sueño > 0): {filtered_count}")
+    print(f"🔍 Filas excluidas por Sueño == 0: {excluded_count}")
+    
+    if excluded_count > 0:
+        excluded_dates = [row['Fecha'] for row in original_rows if float(row.get('Sueño (h)', 0)) == 0]
+        print(f"🔍 Fechas excluidas: {', '.join(excluded_dates)}")
+    
     averages = {}
-    fieldnames = list(rows[0].keys())
+    fieldnames = list(rows[0].keys()) if rows else []
     
     for field in fieldnames:
         if field == 'Fecha':
