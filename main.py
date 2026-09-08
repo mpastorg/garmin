@@ -2,6 +2,7 @@ import os
 import shutil
 import csv
 import garth
+import garth.http  # Importante para resetear la memoria de la librería
 from dotenv import load_dotenv
 from garminconnect import Garmin
 from datetime import date, timedelta
@@ -17,37 +18,57 @@ TOKEN_DIR = os.path.expanduser("~/.garth")
 CSV_FILE_PATH = os.path.join(os.getcwd(), "garmin_stats_history.csv")
 
 def login_garmin():
-    """Conexión robusta (MFA + Corrección de nombre)."""
+    """Conexión robusta que fuerza el prompt de MFA en la terminal."""
     if not EMAIL or not PASSWORD:
         print("❌ Error: Credenciales no encontradas en .env")
         return None
 
-    try:
-        if os.path.exists(TOKEN_DIR):
-            garth.resume(TOKEN_DIR)
-            if not garth.client.profile:
-                raise Exception("Perfil vacío")
-    except Exception:
-        if os.path.exists(TOKEN_DIR):
-            shutil.rmtree(TOKEN_DIR)
+    # --- PASO 1: Intentar cargar la sesión ---
+    if os.path.exists(TOKEN_DIR):
         try:
-            garth.login(EMAIL, PASSWORD)
-            garth.save(TOKEN_DIR)
+            print(f"🔄 Intentando cargar sesión desde {TOKEN_DIR}...")
+            garth.resume(TOKEN_DIR)
+            garth.client.username  # Llamada de prueba ligera
+            print("✅ Sesión recuperada de la caché.")
         except Exception as e:
-            print(f"❌ Error en login: {e}")
+            print(f"⚠️ Sesión caducada ({e}). Limpiando y preparando MFA...")
+            shutil.rmtree(TOKEN_DIR)
+            garth.client = garth.http.Client()  # Reset total de memoria
+
+    # --- PASO 2: Login con MFA (Solo si no hay sesión válida) ---
+    if not os.path.exists(TOKEN_DIR):
+        try:
+            print("🔐 Iniciando login fresco. ATENCIÓN AL MÓVIL...")
+            print("⏳ El script se pausará aquí. Escribe el código de 6 dígitos y pulsa Enter:")
+            
+            # ESTA es la línea que gestiona el MFA correctamente sin colapsar
+            garth.login(EMAIL, PASSWORD)
+            
+            # Si llegamos aquí, el MFA fue correcto
+            garth.save(TOKEN_DIR)
+            print("✅ Login con MFA exitoso. Sesión guardada para el futuro.")
+        except Exception as e:
+            print(f"❌ Error durante el login interactivo: {e}")
             return None
 
+    # --- PASO 3: Inyectar la sesión validada al cliente de Garmin ---
     try:
         client = Garmin(EMAIL, PASSWORD)
+        # Le pasamos la conexión de garth ya autenticada (con el MFA superado)
         client.garth = garth.client
+        
         if garth.client.profile:
-            client.display_name = garth.client.profile['displayName']
+            client.display_name = garth.client.profile.get('displayName')
+        else:
+            client.display_name = EMAIL
+            
+        print(f"🚀 Cliente de Garmin listo. Usuario: {client.display_name}")
         return client
     except Exception as e:
-        print(f"❌ Error configurando cliente: {e}")
+        print(f"❌ Error configurando cliente Garmin final: {e}")
         return None
-
-def get_days_data(client, days=7):
+    
+def get_days_data(client, days=20):
     """Descarga los últimos días."""
     data_list = []
     end_date = date.today()
@@ -94,7 +115,7 @@ def get_column_averages(rows):
     
     original_rows = rows
     original_count = len(original_rows)
-    print(f"🔍 Total filas antes del filtro: {original_count}")
+    print(f"\n🔍 Total filas antes del filtro: {original_count}")
     
     # Filtrar filas donde Sueño (h) es 0
     rows = [row for row in original_rows if float(row.get('Sueño (h)', 0)) != 0]
@@ -138,7 +159,7 @@ def update_csv_history(new_data):
     existing_rows = []
     new_dates = set(row['Fecha'] for row in new_data)
     
-    # 1. Si el archivo existe, leemos las filas que NO están en los nuevos datos (saltando la fila de medias)
+    # 1. Si el archivo existe, leemos las filas que NO están en los nuevos datos
     if file_exists:
         try:
             with open(CSV_FILE_PATH, mode='r', encoding='utf-8') as f:
@@ -153,7 +174,6 @@ def update_csv_history(new_data):
                     # Normalizar claves: eliminar " (media: ...)" si existe
                     normalized_row = {}
                     for key, value in row.items():
-                        # Extraer solo el nombre del campo sin la media
                         clean_key = key.split(' (media:')[0] if key else key
                         normalized_row[clean_key] = value
                     
@@ -191,7 +211,7 @@ def update_csv_history(new_data):
             # Escribimos las filas de datos
             writer.writerows(all_rows)
             
-        print(f"✅ Se han actualizado {len(new_data)} registros en: {CSV_FILE_PATH}")
+        print(f"\n✅ Se han actualizado {len(new_data)} registros en: {CSV_FILE_PATH}")
         print(f"   Medias calculadas: {averages}")
         
     except Exception as e:
@@ -202,8 +222,8 @@ def main():
     if not client:
         return
 
-    # Obtenemos los últimos 7 días por seguridad (por si el script falló algún día)
-    data = get_days_data(client, days=7)
+    # Obtenemos los últimos 7 días
+    data = get_days_data(client, days=20)
     
     # Actualizamos el histórico
     update_csv_history(data)
